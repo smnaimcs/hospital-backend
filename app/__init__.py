@@ -21,6 +21,7 @@ def create_app(config_name='default'):
     from app.routes.appointment import appointment_bp
     from app.routes.medical import medical_bp
     from app.routes.billing import billing_bp
+    from app.routes.inventory import inventory_bp
     
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
     app.register_blueprint(patient_bp, url_prefix='/api/patient')
@@ -29,6 +30,7 @@ def create_app(config_name='default'):
     app.register_blueprint(appointment_bp, url_prefix='/api/appointments')
     app.register_blueprint(medical_bp, url_prefix='/api/medical')
     app.register_blueprint(billing_bp, url_prefix='/api/billing')
+    app.register_blueprint(inventory_bp, url_prefix='/api/inventory')
     
     # Error handlers
     @app.errorhandler(404)

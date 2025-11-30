@@ -95,7 +95,7 @@ class StockAlert(db.Model):
     def to_dict(self):
         return {
             'id': self.id,
-            'medicine': self.medicine.to_dict() if self.medicine else None,
+            'medicine_id': self.medicine_id,
             'alert_type': self.alert_type,
             'message': self.message,
             'is_resolved': self.is_resolved,

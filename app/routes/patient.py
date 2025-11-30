@@ -1,6 +1,6 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
-from app.models import User, UserRole, Patient, Doctor, Appointment, MedicalRecord, MedicalBill, AppointmentHistory
+from app.models import User, UserRole, Patient, Doctor, Appointment, MedicalRecord, Bill, AppointmentHistory
 from app.utils.auth import get_current_user, require_roles
 from app.extensions import db
 from datetime import datetime
@@ -164,22 +164,28 @@ def get_medical_records():
 
 @patient_bp.route('/bills', methods=['GET'])
 @jwt_required()
-@require_roles(UserRole.PATIENT)
+@require_roles(UserRole.PATIENT, UserRole.ADMIN)
 def get_bills():
     try:
         user = get_current_user()
         status = request.args.get('status')
-        
-        query = MedicalBill.query.filter_by(patient_id=user.patient.id)
-        
+
+        # Admin sees ALL bills
+        if user.role == UserRole.ADMIN:
+            query = Bill.query
+        else:
+            # Patient sees only their own bills
+            query = Bill.query.filter_by(patient_id=user.patient.id)
+
+        # Optional filtering by status
         if status:
             query = query.filter_by(status=status)
-        
-        bills = query.order_by(MedicalBill.created_at.desc()).all()
-        
+
+        bills = query.order_by(Bill.created_at.desc()).all()
+
         return jsonify({
             'bills': [bill.to_dict() for bill in bills]
         }), 200
-        
+
     except Exception as e:
         return jsonify({'message': f'Failed to fetch bills: {str(e)}'}), 500

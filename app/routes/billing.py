@@ -1,6 +1,6 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
-from app.models import User, UserRole, Bill, Payment, PaymentStatus, PaymentMethod, Expense
+from app.models import User, UserRole, Bill, Payment, PaymentStatus, PaymentMethod, Expense, BillItem
 from app.utils.auth import get_current_user, require_roles
 from app.extensions import db
 from datetime import datetime
@@ -59,7 +59,7 @@ def create_bill():
         create_notification(
             title="New Bill Generated",
             message=f"A new bill (${bill.final_amount}) has been generated for you",
-            receiver_id=bill.patient.user.id,
+            receiver_id=bill.patient_id,
             notification_type="billing"
         )
         
@@ -141,7 +141,7 @@ def process_payment(bill_id):
         create_notification(
             title="Payment Received",
             message=f"Payment of ${amount} received for bill {bill.bill_number}",
-            receiver_id=bill.patient.user.id,
+            receiver_id=bill.patient_id,
             notification_type="payment"
         )
         

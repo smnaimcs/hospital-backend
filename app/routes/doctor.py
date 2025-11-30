@@ -93,6 +93,7 @@ def add_diagnosis():
         
         diagnosis = Diagnosis(
             appointment_id=data['appointment_id'],
+            doctor_id=user.doctor.id,
             diagnosis=data['diagnosis'],
             symptoms=data.get('symptoms'),
             treatment_plan=data['treatment_plan'],
