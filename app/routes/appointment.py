@@ -19,7 +19,7 @@ def get_appointments():
             query = Appointment.query.filter_by(patient_id=user.patient.id)
         elif user.role == UserRole.DOCTOR:
             query = Appointment.query.filter_by(doctor_id=user.doctor.id)
-        elif user.role == UserRole.ADMIN:
+        elif user.role == UserRole.ADMIN or user.role == UserRole.NURSE:
             query = Appointment.query
         else:
             return jsonify({'message': 'Unauthorized access'}), 403

@@ -1,6 +1,6 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
-from app.models import User, UserRole, TestReport, VitalSigns, MedicalRecord, Patient
+from app.models import User, UserRole, TestReport, VitalSigns, MedicalRecord, Patient, Appointment
 from app.utils.auth import get_current_user, require_roles
 from app.extensions import db
 from datetime import datetime
@@ -198,3 +198,235 @@ def add_medical_record():
     except Exception as e:
         db.session.rollback()
         return jsonify({'message': f'Failed to add medical record: {str(e)}'}), 500
+
+@medical_bp.route('/medical-records', methods=['GET'])
+@jwt_required()
+def get_medical_records():
+    """
+    Get medical records for a patient.
+    Patients can view their own records.
+    Doctors and nurses can view records of their patients.
+    """
+    try:
+        user = get_current_user()
+        patient_id = request.args.get('patient_id')
+        
+        # Build query based on user role
+        if user.role == UserRole.PATIENT:
+            # Patients can only view their own records
+            query = MedicalRecord.query.filter_by(patient_id=user.patient.id)
+            
+        elif user.role in [UserRole.DOCTOR, UserRole.NURSE]:
+            # Medical staff need patient_id parameter
+            if not patient_id:
+                return jsonify({'message': 'Patient ID is required for medical staff'}), 400
+            
+            # Optional: Verify patient belongs to doctor/nurse (for doctor's patients)
+            if user.role == UserRole.DOCTOR:
+                # Check if patient is assigned to this doctor
+                patient = Patient.query.get(patient_id)
+                if patient and patient.primary_doctor_id != user.doctor.id:
+                    # Check through appointments
+                    from app.models import Appointment
+                    has_appointment = Appointment.query.filter_by(
+                        patient_id=patient_id,
+                        doctor_id=user.doctor.id
+                    ).first()
+                    if not has_appointment:
+                        return jsonify({'message': 'Not authorized to view this patient\'s records'}), 403
+            
+            query = MedicalRecord.query.filter_by(patient_id=patient_id)
+            
+        elif user.role in [UserRole.LAB_TECHNICIAN, UserRole.STAFF]:
+            # Other staff roles might need limited access
+            if not patient_id:
+                return jsonify({'message': 'Patient ID is required'}), 400
+            query = MedicalRecord.query.filter_by(patient_id=patient_id)
+            
+        else:
+            return jsonify({'message': 'Unauthorized access'}), 403
+        
+        # Optional filtering parameters
+        record_type = request.args.get('record_type')
+        if record_type:
+            query = query.filter_by(record_type=record_type)
+        
+        start_date = request.args.get('start_date')
+        end_date = request.args.get('end_date')
+        if start_date:
+            query = query.filter(MedicalRecord.date_recorded >= datetime.fromisoformat(start_date))
+        if end_date:
+            query = query.filter(MedicalRecord.date_recorded <= datetime.fromisoformat(end_date))
+        
+        # Pagination
+        page = request.args.get('page', 1, type=int)
+        per_page = request.args.get('per_page', 20, type=int)
+        paginated_records = query.order_by(MedicalRecord.date_recorded.desc()).paginate(
+            page=page, 
+            per_page=per_page, 
+            error_out=False
+        )
+        
+        records_data = [record.to_dict() for record in paginated_records.items]
+        
+        # Include doctor/nurse names if not in to_dict()
+        for record in records_data:
+            recorded_by_user = User.query.get(record['recorded_by'])
+            if recorded_by_user:
+                record['recorded_by_name'] = f"{recorded_by_user.first_name} {recorded_by_user.last_name}"
+        
+        return jsonify({
+            'message': 'Medical records retrieved successfully',
+            'medical_records': records_data,
+            'pagination': {
+                'total': paginated_records.total,
+                'pages': paginated_records.pages,
+                'current_page': paginated_records.page,
+                'per_page': paginated_records.per_page,
+                'has_next': paginated_records.has_next,
+                'has_prev': paginated_records.has_prev
+            }
+        }), 200
+        
+    except ValueError as e:
+        return jsonify({'message': f'Invalid date format: {str(e)}'}), 400
+    except Exception as e:
+        return jsonify({'message': f'Failed to fetch medical records: {str(e)}'}), 500
+
+
+@medical_bp.route('/medical-records/<int:record_id>', methods=['GET'])
+@jwt_required()
+def get_medical_record_by_id(record_id):
+    """
+    Get a specific medical record by ID.
+    """
+    try:
+        user = get_current_user()
+        
+        # Get the medical record
+        medical_record = MedicalRecord.query.get(record_id)
+        if not medical_record:
+            return jsonify({'message': 'Medical record not found'}), 404
+        
+        # Check authorization
+        if user.role == UserRole.PATIENT:
+            if medical_record.patient_id != user.patient.id:
+                return jsonify({'message': 'Not authorized to view this record'}), 403
+                
+        elif user.role in [UserRole.DOCTOR, UserRole.NURSE]:
+            # For doctors, check if they are the patient's doctor or have appointments with them
+            if user.role == UserRole.DOCTOR:
+                patient = Patient.query.get(medical_record.patient_id)
+                if patient and patient.primary_doctor_id != user.doctor.id:
+                    # Check through appointments
+                    from app.models import Appointment
+                    has_appointment = Appointment.query.filter_by(
+                        patient_id=medical_record.patient_id,
+                        doctor_id=user.doctor.id
+                    ).first()
+                    if not has_appointment:
+                        return jsonify({'message': 'Not authorized to view this record'}), 403
+        
+        elif user.role in [UserRole.LAB_TECHNICIAN, UserRole.STAFF]:
+            # Limited access for other staff - might need specific permissions
+            return jsonify({'message': 'Not authorized to view medical records'}), 403
+        else:
+            return jsonify({'message': 'Unauthorized access'}), 403
+        
+        # Get record data
+        record_data = medical_record.to_dict()
+        
+        # Add recorded by user name
+        recorded_by_user = User.query.get(record_data['recorded_by'])
+        if recorded_by_user:
+            record_data['recorded_by_name'] = f"{recorded_by_user.first_name} {recorded_by_user.last_name}"
+        
+        # Add patient name for staff reference
+        if user.role in [UserRole.DOCTOR, UserRole.NURSE]:
+            patient = Patient.query.get(medical_record.patient_id)
+            if patient and patient.user:
+                record_data['patient_name'] = f"{patient.user.first_name} {patient.user.last_name}"
+        
+        return jsonify({
+            'message': 'Medical record retrieved successfully',
+            'medical_record': record_data
+        }), 200
+        
+    except Exception as e:
+        return jsonify({'message': f'Failed to fetch medical record: {str(e)}'}), 500
+
+@medical_bp.route('/patient-arrival/<int:appointment_id>', methods=['PUT'])
+@jwt_required()
+@require_roles(UserRole.NURSE, UserRole.STAFF)
+def update_patient_arrival(appointment_id):
+    try:
+        user = get_current_user()
+        data = request.get_json()
+        
+        appointment = Appointment.query.get(appointment_id)
+        if not appointment:
+            return jsonify({'message': 'Appointment not found'}), 404
+        
+        if 'arrival_status' not in data:
+            return jsonify({'message': 'Arrival status is required'}), 400
+        
+        # Update appointment with arrival status
+        appointment.arrival_status = data['arrival_status']  # You'll need to add this field to Appointment model
+        appointment.arrival_time = datetime.utcnow() if data['arrival_status'] == 'arrived' else None
+        appointment.checked_in_by = user.id
+        
+        db.session.commit()
+        
+        # Notify doctor
+        from app.utils.notifications import create_notification
+        create_notification(
+            title="Patient Arrival Update",
+            message=f"Patient {appointment.patient.user.first_name} has {data['arrival_status']}",
+            receiver_id=appointment.doctor.user.id,
+            sender_id=user.id,
+            notification_type="patient_arrival"
+        )
+        
+        return jsonify({
+            'message': 'Patient arrival status updated successfully',
+            'appointment': appointment.to_dict()
+        }), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'message': f'Failed to update patient arrival: {str(e)}'}), 500
+
+@medical_bp.route('/pass-tokens', methods=['POST'])
+@jwt_required()
+@require_roles(UserRole.STAFF)
+def generate_pass_token():
+    try:
+        user = get_current_user()
+        data = request.get_json()
+        
+        required_fields = ['patient_id', 'purpose', 'valid_until']
+        for field in required_fields:
+            if field not in data:
+                return jsonify({'message': f'Missing required field: {field}'}), 400
+        
+        # You'll need to create a PassToken model
+        pass_token = PassToken(
+            patient_id=data['patient_id'],
+            generated_by=user.id,
+            purpose=data['purpose'],
+            token=f"PASS-{datetime.now().strftime('%Y%m%d%H%M%S')}",
+            valid_until=datetime.fromisoformat(data['valid_until']),
+            status='active'
+        )
+        
+        db.session.add(pass_token)
+        db.session.commit()
+        
+        return jsonify({
+            'message': 'Pass token generated successfully',
+            'pass_token': pass_token.to_dict()
+        }), 201
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'message': f'Failed to generate pass token: {str(e)}'}), 500

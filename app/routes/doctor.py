@@ -175,12 +175,18 @@ def get_patient_medical_history(patient_id):
         test_reports = TestReport.query.join(Appointment).filter(
             Appointment.patient_id == patient_id
         ).all()
+        #Get prescriptions
+        prescriptions = Prescription.query.join(Appointment).filter(
+            Appointment.patient_id == patient_id
+        ).all()
         
         return jsonify({
             'patient': patient.to_dict(),
             'medical_records': [record.to_dict() for record in medical_records],
             'diagnoses': [diagnosis.to_dict() for diagnosis in diagnoses],
-            'test_reports': [report.to_dict() for report in test_reports]
+            'test_reports': [report.to_dict() for report in test_reports],
+            'prescriptions': [prescription.to_dict() for prescription in prescriptions]
+
         }), 200
         
     except Exception as e:

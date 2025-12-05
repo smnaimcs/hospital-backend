@@ -294,3 +294,88 @@ def check_stock_alerts(inventory):
                     message=f'Medicine {inventory.medicine.name} expires in {days_until_expiry} days'
                 )
                 db.session.add(alert)
+
+@inventory_bp.route('/notify-financial-manager', methods=['POST'])
+@jwt_required()
+@require_roles(UserRole.PHARMACIST)
+def notify_financial_manager():
+    try:
+        user = get_current_user()
+        data = request.get_json()
+        
+        required_fields = ['message', 'priority']
+        for field in required_fields:
+            if field not in data:
+                return jsonify({'message': f'Missing required field: {field}'}), 400
+        
+        # Get financial managers
+        financial_managers = User.query.filter_by(role=UserRole.FINANCIAL_MANAGER).all()
+        
+        if not financial_managers:
+            return jsonify({'message': 'No financial managers found'}), 404
+        
+        # Create notifications for all financial managers
+        from app.utils.notifications import create_notification
+        for fm in financial_managers:
+            create_notification(
+                title="Pharmacy Notification",
+                message=data['message'],
+                receiver_id=fm.id,
+                sender_id=user.id,
+                notification_type="pharmacy_alert"
+            )
+        
+        return jsonify({
+            'message': 'Financial managers notified successfully'
+        }), 200
+        
+    except Exception as e:
+        return jsonify({'message': f'Failed to notify financial manager: {str(e)}'}), 500
+
+@inventory_bp.route('/vouchers', methods=['POST'])
+@jwt_required()
+@require_roles(UserRole.PHARMACIST)
+def create_voucher():
+    try:
+        user = get_current_user()
+        data = request.get_json()
+        
+        required_fields = ['amount', 'purpose', 'patient_id']
+        for field in required_fields:
+            if field not in data:
+                return jsonify({'message': f'Missing required field: {field}'}), 400
+        
+        # You'll need to create a Voucher model
+        voucher = Voucher(
+            generated_by=user.id,
+            patient_id=data['patient_id'],
+            amount=data['amount'],
+            purpose=data['purpose'],
+            voucher_code=f"VOUCH-{datetime.now().strftime('%Y%m%d%H%M%S')}",
+            status='pending'
+        )
+        
+        db.session.add(voucher)
+        db.session.commit()
+        
+        # Notify financial manager
+        financial_managers = User.query.filter_by(role=UserRole.FINANCIAL_MANAGER).all()
+        from app.utils.notifications import create_notification
+        
+        for fm in financial_managers:
+            create_notification(
+                title="New Voucher Generated",
+                message=f"Voucher for ${data['amount']} generated for patient",
+                receiver_id=fm.id,
+                sender_id=user.id,
+                notification_type="voucher"
+            )
+        
+        return jsonify({
+            'message': 'Voucher created successfully',
+            'voucher': voucher.to_dict()
+        }), 201
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'message': f'Failed to create voucher: {str(e)}'}), 500

@@ -22,6 +22,10 @@ class Appointment(db.Model):
     symptoms = db.Column(db.Text)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    # Add to Appointment model in appointment.py
+    arrival_status = db.Column(db.String(20), default='pending')  # pending, arrived, cancelled
+    arrival_time = db.Column(db.DateTime)
+    checked_in_by = db.Column(db.Integer, db.ForeignKey('users.id'))  # staff who checked in patient
     
     # Relationships
     diagnosis = db.relationship('Diagnosis', backref='appointment', uselist=False)
